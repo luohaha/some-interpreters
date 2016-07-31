@@ -202,15 +202,22 @@
 ;;求if
 (define (analyze-if exp)
   (let ((pproc (analyze (cadr exp)))
-	(cproc (analyze (caddr exp)))
-	(aproc (analyze (car (cdr (cdr (cdr exp)))))))
-    (lambda (env succeed fail)
-      (pproc env
-	     (lambda (p-val fail2)
-	       (if p-val
-		   (cproc env succeed fail2)
-		   (aproc env succeed fail2)))
-	     fail))))
+	(cproc (analyze (caddr exp))))
+    (if (null? (cdr (cdr (cdr exp))))
+	(lambda (env succeed fail)
+	  (pproc env
+		 (lambda (p-val fail2)
+		   (if p-val
+		       (cproc env succeed fail2)))
+		 fail))
+	(let ((aproc (analyze (car (cdr (cdr (cdr exp)))))))
+	  (lambda (env succeed fail)
+	    (pproc env
+		   (lambda (p-val fail2)
+		     (if p-val
+			 (cproc env succeed fail2)
+			 (aproc env succeed fail2)))
+		   fail))))))
 
 ;;求定义
 (define (analyze-definition exp)
@@ -222,6 +229,24 @@
 	       (define-variable! var val env)
 	       (succeed 'ok fail2))
 	     fail))))
+
+;;defun 转到 define
+(define (defun->define exp)
+  `(define ,(car (cadr exp))
+     (lambda ,(cdr (cadr exp))
+       ,@(cddr exp))))
+
+;;命名let转为普通let
+(define (name-let->let exp)
+  `(let ,(caddr exp)
+     (define ,(cadr exp)
+       (lambda ,(map car (caddr exp))
+	 ,@(cdr (cdr (cdr exp)))))
+     (,(cadr exp) ,@(map cadr (caddr exp)))))
+
+;;求函数定义
+(define (analyze-defun exp)
+  (analyze (defun->define exp)))
 
 (define (analyze-let exp)
   (let ((body (analyze-sequence (cddr exp)))
@@ -235,6 +260,9 @@
 			  (succeed val2 fail3))
 			fail2))
 		fail))))
+
+(define (analyze-name-let exp)
+  (analyze (name-let->let exp)))
 
 (define (analyze-let* exp)
   (let ((body (analyze-sequence (cddr exp)))
@@ -342,6 +370,38 @@
 		   (succeed 'ok fail2)
 		   (the-fail)))
 	     fail))))
+;;call/cc
+(define (analyze-call/cc exp)
+  (let ((call (analyze (cadr exp))))
+    (lambda (env succeed fail)
+      (call env
+	    (lambda (val fail2)
+	      (get-args (list (lambda (e s f)
+			  (s (list 'primitive succeed) f)))
+			env
+			(lambda (args fail3)
+			  (execute-application val args succeed fail3))
+			fail2))
+	    fail))))
+
+;;把cond转化为if
+(define (cond->if exp)
+  (define (make-if first rest)
+    (if (not (null? rest))
+	`(if ,(car first)
+	 (begin ,@(cdr first))
+	 ,(make-if (car rest) (cdr rest)))
+	(if (eq? (car first) 'else)
+	    `(begin ,@(cdr first))
+	    `(if ,(car first)
+	     (begin ,@(cdr first))))))
+  (if (not (null? (cdr exp)))
+      (let ((first (car (cadr exp)))
+	    (rest (cdr (cadr exp))))
+	(make-if first rest))))
+
+(define (analyze-cond exp)
+  (analyze (cond->if exp)))
 
 (define (self-evaluating? exp)
   (cond ((number? exp) #t)
@@ -379,11 +439,17 @@
 (define (let? exp)
   (tagged-list? exp 'let))
 
+(define (cond? exp)
+  (tagged-list? exp 'cond))
+
 (define (let*? exp)
   (tagged-list? exp 'let*))
 
 (define (letrec? exp)
   (tagged-list? exp 'letrec))
+
+(define (call/cc? exp)
+  (tagged-list? exp 'call/cc))
 
 (define (analyze exp)
   (cond ((self-evaluating? exp)
@@ -397,13 +463,21 @@
 	((assignment? exp)
 	 (analyze-assignment exp))
 	((define? exp)
-	 (analyze-definition exp))
+	 (if (pair? (cadr exp))
+	     (analyze-defun exp)
+	     (analyze-definition exp)))
 	((amb? exp)
 	 (analyze-amb exp))
 	((require? exp)
 	 (analyze-require exp))
 	((let? exp)
-	 (analyze-let exp))
+	 (if (pair? (cadr exp))
+	     (analyze-let exp)
+	     (analyze-name-let exp)))
+	((cond? exp)
+	 (analyze-cond exp))
+	((call/cc? exp)
+	 (analyze-call/cc exp))
 	((let*? exp)
 	 (analyze-let* exp))
 	((letrec? exp)
@@ -431,12 +505,16 @@
 	    (reverse ls)
 	    (loop (cons s ls) (read)))))))
 
+(define call/cc call-with-current-continuation)
+
 (define (my-eval exp)
-  (amb-eval exp the-global-env
+  (call/cc
+   (lambda (k)
+     (amb-eval exp the-global-env
 	    (lambda (val fail)
-		  val)
+	      (k val))
 	    (lambda ()
-	      'fail)))
+	      'fail)))))
 ;;解释文件中的内容
 (define (eval-file filename)
   (define (eval-loop lst ans)
