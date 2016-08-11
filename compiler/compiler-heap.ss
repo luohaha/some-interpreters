@@ -1,17 +1,5 @@
-(define-syntax record
-  (syntax-rules ()
-    [(_ (var ...) val exp ...)
-     (apply (lambda (var ...) exp ...) val)]))
 
-(define-syntax record-case
-  (syntax-rules (else)
-    [(_ exp1 (key vars exp2 ...) next ... (else exp3 ...))
-     (let ((r exp1))
-       (cond [(eq? (car r) 'key)
-	      (record vars (cdr r) exp2 ...)]
-	     [else (record-case exp1 next ... (else exp3 ...))]))]
-    [(_ exp1 (else exp3 ...))
-     (begin exp3 ...)]))
+(load "utils.ss")
 
 (define tail?
   (lambda (next)
