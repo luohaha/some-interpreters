@@ -13,9 +13,9 @@
 ;;(return)
 
 ;; the stack' structures
-;; | dynamic link (top)  -> x
-;; | static link         -> e
-;; | value rib (bottom)  -> r
+;; | the next expression (top)  -> x
+;; | the current environment    -> e
+;; | the current rib (bottom)   -> r
 
 (load "utils.ss")
 (load "stack.ss")
