@@ -1,8 +1,9 @@
 ;;instructions :
 ;;(halt)
-;;(refer n m x)
+;;(refer-local n x)  =>  load the nth argument in current call frame
+;;(refer-free n x)  =>  load the nth free argument in closure
 ;;(constant obj x)
-;;(close body x)
+;;(close n body x) => 
 ;;(test then else)
 ;;(assign var x)
 ;;(conti x)
@@ -10,110 +11,151 @@
 ;;(frame x ret)
 ;;(argument x) => push the argument in acc on stack
 ;;(apply)
-;;(return)
+;;(return n)
 
 ;; the stack' structures
+;; | ...
+;; | argn
 ;; | the next expression (top)  -> x
-;; | the current environment    -> e
-;; | the current rib (bottom)   -> r
+;; | the current frame    -> f
+;; | the current closure (bottom)   -> c
+
+;;register =>
+;; a => accumulator
+;; x => next expression
+;; f => current call frame
+;; c => current closure
+;; s => current stack
 
 (load "utils.ss")
 (load "stack.ss")
-
-(define closure
-  (lambda (body e)
-    (list body e)))
+(load "set.ss")
 
 (define continuation
   (lambda (s)
-    (closure `(refer ,0 ,0 (nuate ,(save-stack s) (return))) '())))
+    (closure `(refer-local ,0 (nuate ,(save-stack s) (return ,0))) 0 '())))
 
-(define tail?
-  (lambda (next)
-    (eq? (car next) 'return)))
+(define find-free
+  (lambda (x b)
+    (cond [(symbol? x) (if (set-member? x b) '() (list x))]
+	  [(pair? x)
+	   (record-case
+	    x
+	    [quote (obj) '()]
+	    [lambda (vars body) (find-free body (set-union vars b))]
+	    [if (test then else)
+		(set-union (find-free test b)
+			   (set-union (find-free then b)
+				      (find-free else b)))]
+	    [call/cc (clo) (find-free clo b)]
+	    [else (let loop ([x x])
+		    (if (null? x)
+			'()
+			(set-union (find-free (car x) b)
+				   (loop (cdr x)))))])]
+	  [else '()])))
 
 (define compile-lookup
-  (lambda (var e return)
-    (let next-rib ([e e] [rib 0])
-      (let next-elt ([vars (car e)] [elt 0])
-	(cond
-	 [(null? vars) (next-rib (cdr e) (+ rib 1))]
-	 [(eq? (car vars) var) (return rib elt)]
-	 [else (next-elt (cdr vars) (+ elt 1))])))))
+  (lambda (x e return-local return-free)
+    (let loop-local ([locals (car e)] [n 0])
+      (if (null? locals)
+	  (let loop-free ([frees (cdr e)] [m 0])
+	    (if (eq? (car frees) x)
+		(return-free m)
+		(loop-free (cdr frees) (+ m 1))))
+	  (if (eq? (car locals) x)
+	      (return-local n)
+	      (loop-local (cdr locals) (+ n 1)))))))
 
-(define (extend e r)
-  (cons r e))
+(define compile-refer
+  (lambda (x e next)
+    (compile-lookup x e (lambda (n) `(refer-local ,n ,next))
+		    (lambda (n) `(refer-free ,n ,next)))))
+
+(define collect-free
+  (lambda (vars e next)
+    (if (null? vars)
+	next
+	(collect-free (cdr vars) e (compile-refer (car vars)
+						  e
+						  `(argument ,next))))))
 
 (define compile
   (lambda (x e next)
     ;;(debug-line x)
     (cond
-     [(symbol? x) (compile-lookup x e (lambda (n m)
-					`(refer ,n ,m ,next)))]
+     [(symbol? x) (compile-refer x e next)]
      [(pair? x)
       (record-case
        x
        [quote (obj) `(constant ,obj ,next)]
        [lambda (vars body)
-	 `(close ,(compile body (extend e vars) `(return)) ,next)]
+	 (let ([free (find-free body vars)])
+	   (collect-free free e
+			 `(close ,(length free)
+				 ,(compile body
+					  (cons vars free)
+					  `(return ,(length vars)))
+				 ,next)))]
        [if (test then else)
 	   (let ([after-then (compile then e next)]
 		 [after-else (compile else e next)])
 	     (compile test e `(test ,after-then, after-else)))]
-       [set! (var x)
-	     (compile-lookup var e (lambda (n m)
-				     (compile x e `(assign ,n ,m ,next))))]
        [call/cc (x)
 		(let ((c `(conti (argument ,(compile x e '(apply))))))
-		  (if (tail? next)
-		      c
-		      `(frame ,next ,c)))]
+		  `(frame ,next ,c))]
        [else
 	(let loop ([args (cdr x)] [c (compile (car x) e '(apply))])
 	  (if (null? args)
-	      (if (tail? next)
-		  c
-		  `(frame ,next ,c))
+	      `(frame ,next ,c)
 	      (loop (cdr args)
 		    (compile (car args)
 			     e
 			     `(argument ,c)))))])]
      [else `(constant ,x ,next)])))
 
-(define lookup
-  (lambda (n m e)
-    (let next-rib ([e e] [rib n])
-      (if (= rib 0)
-	  (let next-elt ([r (car e)] [elt m])
-	    (if (= elt 0)
-		r
-		(next-elt (cdr r) (- elt 1))))
-	  (next-rib (cdr e) (- rib 1))))))
+(define closure
+  (lambda (body n s)
+    (let ([v (make-vector (+ n 1))])
+      (vector-set! v 0 body)
+      (let loop ([i 0])
+	(if (= i n)
+	    v
+	    (begin (vector-set! v (+ i 1) (index s i))
+		   (loop (+ i 1))))))))
+
+(define closure-index
+  (lambda (clo n)
+    (vector-ref clo n)))
 
 (define VM
-  (lambda (a x e r s)
+  (lambda (a x f c s)
+    ;;(debug-line x)
     (record-case
      x
      [halt () a]
-     [refer (n m x) (VM (car (lookup n m e)) x e r s)]
-     [constant (obj x) (VM obj x e r s)]
-     [close (body x) (VM (closure body e) x e r s)]
-     [test (then else) (VM a (if a then else) e r s)]
-     [assign (n m x) (set-car! (lookup n m e) a) (VM a x e r s)]
-     [conti (x) (VM (continuation s) x e r s)]
-     [nuate (stack x) (VM a x e r (restore-stack stack))]
-     [frame (ret x) (VM a x e '() (push ret (push e (push r s))))]
-     [argument (x) (VM a x e (cons a r) s)]
-     [apply () (VM a (car a) (extend (cadr a) r) '() s)]
-     [return () (VM a (index s 0) (index s 1) (index s 2) (- s 3))]
+     [refer-local (n x) (VM (index f n) x f c s)]
+     [refer-free (n x) (VM (closure-index c (+ n 1)) x f c s)]
+     [constant (obj x) (VM obj x f c s)]
+     [close (n body x) (VM (closure body n s) x f c (- s n))]
+     [test (then else) (VM a (if a then else) f c s)]
+     [conti (x) (VM (continuation s) x f c s)]
+     [nuate (stack x) (VM a x f c (restore-stack stack))]
+     [frame (ret x) (VM a x f c (push ret (push f (push c s))))]
+     [argument (x) (VM a x f c (push a s))]
+     [apply () (VM a (closure-index a 0) s a s)]
+     [return (n)
+	     (let ([s (- s n)])
+	       (VM a (index s 0) (index s 1) (index s 2) (- s 3)))]
      [else (display "syntax error\n")])))
 
 
 (define evaluate
   (lambda (x)
-    (VM '() (compile x '() '(halt)) '() '() 0)))
+    (VM '() (compile x '() '(halt)) 0 '() 0)))
 
 ;;(display (compile '((lambda (x) (call/cc (lambda (k) (k 2)))) 1) '() '(halt)))
 
-(display (evaluate '((lambda (x) (call/cc (lambda (k) (k 100)))) 1)))
+(display (evaluate '((lambda (x) (call/cc (lambda (k) (k x)))) 1)))
+
 
