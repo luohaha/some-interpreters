@@ -1,7 +1,9 @@
 (define-syntax record
   (syntax-rules ()
     [(_ (var ...) val exp ...)
-     (apply (lambda (var ...) exp ...) val)]))
+     (apply (lambda (var ...) exp ...) val)]
+    [(_ (var . var2) val exp ...)
+     (apply (lambda (var . var2) exp ...) val)]))
 
 (define-syntax record-case
   (syntax-rules (else)
