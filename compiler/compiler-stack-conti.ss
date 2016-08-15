@@ -35,6 +35,31 @@
   (lambda (s)
     (closure `(refer-local ,0 (nuate ,(save-stack s) (return ,0))) 0 '())))
 
+(define find-assignments
+  (lambda (x v)
+    (cond [(symbol? x) '()]
+	  [(pair? x)
+	   (record-case
+	    x
+	    [quote (obj) '()]
+	    [lambda (vars body) (find-assignments body (set-minus v vars))]
+	    [if (test then else)
+		(set-union (find-assignments test v)
+			   (set-union (find-assignments then v)
+				      (find-assignments else v)))]
+	    [set! (var x) (set-union (find-assignments x v)
+				     (if (set-member? var v)
+					 (list var)
+					 '()))]
+	    [call/cc (exp) (find-assignments exp v)]
+	    [else (let loop ([x x])
+		    (if (null? x)
+			'()
+			(set-union (find-assignments (car x) v)
+				   (loop (cdr x)))))]
+	    )]
+	  [else '()])))
+
 (define find-free
   (lambda (x b)
     (cond [(symbol? x) (if (set-member? x b) '() (list x))]
@@ -47,6 +72,8 @@
 		(set-union (find-free test b)
 			   (set-union (find-free then b)
 				      (find-free else b)))]
+	    [set! (var x) (set-union (find-free var b)
+				     (find-free x b))]
 	    [call/cc (clo) (find-free clo b)]
 	    [else (let loop ([x x])
 		    (if (null? x)
@@ -80,37 +107,65 @@
 						  e
 						  `(argument ,next))))))
 
+(define make-boxs
+  (lambda (sets vars next)
+    (let loop ([vars vars] [n 0])
+      (if (null? vars)
+	  next
+	  (if (set-member? (car vars) sets)
+	      `(box ,n ,(loop (cdr vars) (+ n 1)))
+	      (loop (cdr vars) (+ n 1)))))))
+
+(define compile-multi
+  (lambda (lst e s next)
+    (let loop ([lst lst] [n next])
+      (if (null? lst)
+	  n
+	  (loop (cdr lst) (compile (car lst) e s n))))))
+
 (define compile
-  (lambda (x e next)
+  (lambda (x e s next)
     ;;(debug-line x)
     (cond
-     [(symbol? x) (compile-refer x e next)]
+     [(symbol? x) (compile-refer x e
+				 (if (set-member? x s)
+				     `(indirect ,next)
+				     next))]
      [(pair? x)
       (record-case
        x
        [quote (obj) `(constant ,obj ,next)]
-       [lambda (vars body)
-	 (let ([free (find-free body vars)])
+       [lambda (vars . body)
+	 (let ([free (find-free body vars)]
+	       [sets (find-assignments body vars)])
 	   (collect-free free e
-			 `(close ,(length free)
-				 ,(compile body
-					  (cons vars free)
-					  `(return ,(length vars)))
-				 ,next)))]
+			 `(close
+			   ,(length free)
+			   ,(make-boxs sets vars
+				       (compile-multi body
+						(cons vars free)
+						(set-union sets
+							   (set-intersect free s))
+						`(return ,(length vars))))
+			   ,next)))]
        [if (test then else)
-	   (let ([after-then (compile then e next)]
-		 [after-else (compile else e next)])
-	     (compile test e `(test ,after-then, after-else)))]
+	   (let ([after-then (compile then e s next)]
+		 [after-else (compile else e s next)])
+	     (compile test e s `(test ,after-then, after-else)))]
+       [set! (var x) (compile-lookup var e
+				     (lambda (n) (compile x e s `(assign-local ,n ,next)))
+				     (lambda (n) (compile x e s `(assign-free ,n ,next))))]
        [call/cc (x)
-		(let ((c `(conti (argument ,(compile x e '(apply))))))
+		(let ((c `(conti (argument ,(compile x e s '(apply))))))
 		  `(frame ,next ,c))]
        [else
-	(let loop ([args (cdr x)] [c (compile (car x) e '(apply))])
+	(let loop ([args (cdr x)] [c (compile (car x) e s '(apply))])
 	  (if (null? args)
 	      `(frame ,next ,c)
 	      (loop (cdr args)
 		    (compile (car args)
 			     e
+			     s
 			     `(argument ,c)))))])]
      [else `(constant ,x ,next)])))
 
@@ -128,6 +183,12 @@
   (lambda (clo n)
     (vector-ref clo n)))
 
+(define (box x)
+  (list x))
+
+(define (unbox x)
+  (car x))
+
 (define VM
   (lambda (a x f c s)
     ;;(debug-line x)
@@ -136,9 +197,16 @@
      [halt () a]
      [refer-local (n x) (VM (index f n) x f c s)]
      [refer-free (n x) (VM (closure-index c (+ n 1)) x f c s)]
+     [indirect (x) (VM (unbox a) x f c s)]
      [constant (obj x) (VM obj x f c s)]
      [close (n body x) (VM (closure body n s) x f c (- s n))]
+     [box (n x) (index-set! s n (box (index f n)))
+	  (VM a x f c s)]
      [test (then else) (VM a (if a then else) f c s)]
+     [assign-local (n x) (set-car! (index f n) a)
+		   (VM a x f c s)]
+     [assign-free (n x) (set-car! (closure-index c n) a)
+		  (VM a x f c s)]
      [conti (x) (VM (continuation s) x f c s)]
      [nuate (stack x) (VM a x f c (restore-stack stack))]
      [frame (ret x) (VM a x f c (push ret (push f (push c s))))]
@@ -149,13 +217,11 @@
 	       (VM a (index s 0) (index s 1) (index s 2) (- s 3)))]
      [else (display "syntax error\n")])))
 
-
 (define evaluate
   (lambda (x)
-    (VM '() (compile x '() '(halt)) 0 '() 0)))
+    (VM '() (compile x '() '() '(halt)) 0 '() 0)))
 
-;;(display (compile '((lambda (x) (call/cc (lambda (k) (k 2)))) 1) '() '(halt)))
+;;(display (compile '((lambda (x) (set! x 2) x) 1) '() '() '(halt)))
 
-(display (evaluate '((lambda (x) (call/cc (lambda (k) (k x)))) 1)))
-
+(display (evaluate '((lambda (x) (set! x 2) x) 1)))
 
