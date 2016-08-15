@@ -5,6 +5,13 @@
   (lambda (next)
     (eq? (car next) 'return)))
 
+(define compile-multi
+  (lambda (lst next)
+    (let loop ([lst lst] [n next])
+      (if (null? lst)
+	  n
+	  (loop (cdr lst) (compile (car lst) n))))))
+
 (define compile
   (lambda (x next)
     (cond [(symbol? x) (list 'refer x next)]
@@ -12,7 +19,7 @@
 	   (record-case
 	    x
 	    [quote (obj) (list 'constant obj x)]
-	    [lambda (vars body) (list 'close vars (compile body '(return)) next)]
+	    [lambda (vars . body) (list 'close vars (compile-multi body '(return)) next)]
 	    [if (test then else)
 		(let ((after-then (compile then next))
 		      (after-else (compile else next)))
@@ -61,6 +68,7 @@
 
 (define VM
   (lambda (a x e r s)
+    (debug-line x)
     (record-case
      x
      [halt () a]
@@ -87,5 +95,5 @@
 
 ;;(display (compile '((lambda (x y) x) 3 4) '(halt)))
 
-(display (evaluate '((lambda (x y) (call/cc (lambda (k) (k 1)))) 3 4)))
+(display (evaluate '((lambda (x y) (set! x 56) x) 3 4)))
 

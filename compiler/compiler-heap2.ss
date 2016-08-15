@@ -18,6 +18,13 @@
   (lambda (e rib)
     (cons rib e)))
 
+(define compile-multi
+  (lambda (lst e next)
+    (let loop ([lst lst] [n next])
+      (if (null? lst)
+	  n
+	  (loop (cdr lst) (compile (car lst) e n))))))
+
 (define compile
   (lambda (x e next)
     (cond [(symbol? x) (list 'refer (compile-lookup x e) next)]
@@ -25,7 +32,7 @@
 	   (record-case
 	    x
 	    [quote (obj) (list 'constant obj x)]
-	    [lambda (vars body) (list 'close (compile body (extend e vars) '(return)) next)]
+	    [lambda (vars . body) (list 'close (compile-multi body (extend e vars) '(return)) next)]
 	    [if (test then else)
 		(let ((after-then (compile then e next))
 		      (after-else (compile else e next)))
@@ -100,6 +107,6 @@
 
 ;;(display (compile '((lambda (x y) x) 3 4) '() '(halt)))
 
-(display (evaluate '((lambda (x y) (call/cc (lambda (k) (k 1)))) 3 4)))
+(display (evaluate '((lambda (x y) (set! x 45) x) 3 4)))
 
 

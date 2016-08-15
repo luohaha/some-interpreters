@@ -38,6 +38,13 @@
 (define (extend e r)
   (cons r e))
 
+(define compile-multi
+  (lambda (lst e next)
+    (let loop ([lst lst] [n next])
+      (if (null? lst)
+	  n
+	  (loop (cdr lst) (compile (car lst) e n))))))
+
 (define compile
   (lambda (x e next)
     ;;(debug-line x)
@@ -48,8 +55,8 @@
       (record-case
        x
        [quote (obj) `(constant ,obj ,next)]
-       [lambda (vars body)
-	 `(close ,(compile body (extend e vars) `(return ,(+ (length vars) 1))) ,next)]
+       [lambda (vars . body)
+	 `(close ,(compile-multi body (extend e vars) `(return ,(+ (length vars) 1))) ,next)]
        [if (test then else)
 	   (let ([after-then (compile then e next)]
 		 [after-else (compile else e next)])
@@ -103,5 +110,5 @@
 
 ;;(display (compile '((lambda (x) x) 1) '() '(halt)))
 
-(display (evaluate '((lambda (x) ((lambda (y) y) x)) 1)))
+(display (evaluate '((lambda (x) (set! x 123) x) 4)))
 
