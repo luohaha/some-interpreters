@@ -40,7 +40,7 @@
 
 (define compile-multi
   (lambda (lst e next)
-    (let loop ([lst lst] [n next])
+    (let loop ([lst (reverse lst)] [n next])
       (if (null? lst)
 	  n
 	  (loop (cdr lst) (compile (car lst) e n))))))
@@ -110,5 +110,5 @@
 
 ;;(display (compile '((lambda (x) x) 1) '() '(halt)))
 
-(display (evaluate '((lambda (x) (set! x 123) x) 4)))
+(display (evaluate '((lambda (x) (set! x 123) 121) 4)))
 

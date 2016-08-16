@@ -7,7 +7,7 @@
 
 (define compile-multi
   (lambda (lst next)
-    (let loop ([lst lst] [n next])
+    (let loop ([lst (reverse lst)] [n next])
       (if (null? lst)
 	  n
 	  (loop (cdr lst) (compile (car lst) n))))))
@@ -68,7 +68,7 @@
 
 (define VM
   (lambda (a x e r s)
-    (debug-line x)
+    ;;(debug-line x)
     (record-case
      x
      [halt () a]
@@ -95,5 +95,5 @@
 
 ;;(display (compile '((lambda (x y) x) 3 4) '(halt)))
 
-(display (evaluate '((lambda (x y) (set! x 56) x) 3 4)))
+(display (evaluate '((lambda (x y) (set! x 56) 12) 3 4)))
 
