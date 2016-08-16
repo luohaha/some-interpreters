@@ -12,6 +12,7 @@
 ;;(argument x) => push the argument in acc on stack
 ;;(apply)
 ;;(return n)
+;;(shift n m x)
 
 ;; the stack' structures
 ;; | ...
@@ -34,6 +35,10 @@
 (define continuation
   (lambda (s)
     (closure `(refer-local ,0 (nuate ,(save-stack s) (return ,0))) 0 '())))
+
+(define tail?
+  (lambda (next)
+    (eq? (car next) 'return)))
 
 (define find-assignments
   (lambda (x v)
@@ -118,7 +123,7 @@
 
 (define compile-multi
   (lambda (lst e s next)
-    (let loop ([lst lst] [n next])
+    (let loop ([lst (reverse lst)] [n next])
       (if (null? lst)
 	  n
 	  (loop (cdr lst) (compile (car lst) e s n))))))
@@ -156,12 +161,21 @@
 				     (lambda (n) (compile x e s `(assign-local ,n ,next)))
 				     (lambda (n) (compile x e s `(assign-free ,n ,next))))]
        [call/cc (x)
-		(let ((c `(conti (argument ,(compile x e s '(apply))))))
-		  `(frame ,next ,c))]
+		(let ((c `(conti (argument ,(compile x e s
+						     (if (tail? next)
+							 `(shift ,1 ,(cadr next) (apply))
+							 '(apply)))))))
+		  (if (tail? next)
+		      c
+		      `(frame ,next ,c)))]
        [else
-	(let loop ([args (cdr x)] [c (compile (car x) e s '(apply))])
+	(let loop ([args (cdr x)] [c (compile (car x) e s (if (tail? next)
+							      `(shift ,(length (cdr x)) ,(cadr next) (apply))
+							      '(apply)))])
 	  (if (null? args)
-	      `(frame ,next ,c)
+	      (if (tail? next)
+		  c
+		  `(frame ,next ,c))
 	      (loop (cdr args)
 		    (compile (car args)
 			     e
@@ -189,6 +203,13 @@
 (define (unbox x)
   (car x))
 
+(define (shift-arg n m s)
+  (let loop ([n (- n 1)])
+    (if (< n 0)
+	(- s m)
+	(begin (index-set! s (+ n m) (index s n))
+	       (loop (- n 1))))))
+
 (define VM
   (lambda (a x f c s)
     ;;(debug-line x)
@@ -211,6 +232,7 @@
      [nuate (stack x) (VM a x f c (restore-stack stack))]
      [frame (ret x) (VM a x f c (push ret (push f (push c s))))]
      [argument (x) (VM a x f c (push a s))]
+     [shift (n m x) (VM a x f c (shift-arg n m s))]
      [apply () (VM a (closure-index a 0) s a s)]
      [return (n)
 	     (let ([s (- s n)])
@@ -221,7 +243,7 @@
   (lambda (x)
     (VM '() (compile x '() '() '(halt)) 0 '() 0)))
 
-;;(display (compile '((lambda (x) (set! x 2) x) 1) '() '() '(halt)))
+(display (compile '((lambda (f x) (set! x 2) (f x)) (lambda (y) y) 1) '() '() '(halt)))
 
-(display (evaluate '((lambda (x) (set! x 2) x) 1)))
+;;(display (evaluate '((lambda (f x) (f x)) (lambda (y) y) 1)))
 
