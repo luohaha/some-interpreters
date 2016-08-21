@@ -135,10 +135,18 @@
 
 (define compile-multi
   (lambda (lst e s next)
-    (let loop ([lst (reverse lst)] [n next])
+    (define (loop lst)
       (if (null? lst)
-	  n
-	  (loop (cdr lst) (compile (car lst) e s n))))))
+	  next
+	  (if (and (pair? (car lst))
+		   (eq? (caar lst) 'define))
+	      (let ([new-env (if (null? e)
+				 (cons '() (cons (cadar lst) '()))
+				 (cons (car e) (cons (cadar lst) (cdr e))))])
+		(compile (car lst) new-env s
+			 (compile-multi (cdr lst) new-env s next)))
+	      (compile (car lst) e s (compile-multi (cdr lst) e s next)))))
+    (loop lst)))
 
 ;;primitive procedure which need only one argument
 (define primitive-1
@@ -167,6 +175,12 @@
       (record-case
        x
        [quote (obj) `(constant ,obj ,next)]
+       [begin (b1 . b2)
+	      (compile-multi (cons b1 b2) e s next)]
+       [define (k v) (compile v e s `(argument (close
+						,1
+						,next
+						(apply))))]
        [lambda (vars . body)
 	 (let ([free (find-free body vars)]
 	       [sets (find-assignments body vars)])
@@ -253,7 +267,7 @@
      [indirect (x) (VM (unbox a) x f c s)]
      [constant (obj x) (VM obj x f c s)]
      [close (n body x) (VM (closure body n s) x f c (- s n))]
-     [box (n x) (index-set! s n (box (index f n)))
+     [box (n x) (index-set! s n (box (index s n)))
 	  (VM a x f c s)]
      [test (then else) (VM a (if a then else) f c s)]
      [assign-local (n x) (set-car! (index f n) a)
@@ -287,8 +301,12 @@
   (lambda (x)
     (VM '() (compile (pre-compile x) '() '() '(halt)) 0 '() 0)))
 
-;;(display (compile '((lambda (x) (number? (car x))) (cons 'v 'a)) '() '() '(halt)))
-(display (evaluate '(let ((a 1) (b 2)) (+ (* a b) b))))
+;;(display (compile '(begin (+ 2 3) (* 12 34)) '() '() '(halt)))
+
+(display (evaluate '(begin (define a 4)
+			   (let ([a a])
+			     (/ a a)))))
+
 ;(display (pre-compile '(let ((v (let ((a 1)) a))) (let ((b v)) b))))
 
 
