@@ -2,10 +2,13 @@
 ;;(halt)
 ;;(refer-local n x)  =>  load the nth argument in current call frame
 ;;(refer-free n x)  =>  load the nth free argument in closure
+;;(indirect x)
 ;;(constant obj x)
-;;(close n body x) => 
+;;(close n body x) =>
+;;(box n x)
 ;;(test then else)
-;;(assign var x)
+;;(assign-local var x)
+;;(assign-free var x)
 ;;(conti x)
 ;;(nuate stack x)
 ;;(frame x ret)
@@ -13,13 +16,18 @@
 ;;(apply)
 ;;(return n)
 ;;(shift n m x)
+;;(primitive-1 proc x)
+;;(primitive-2 proc x)
 
 ;; the stack' structures
+;; (top)
+;; | arg1
 ;; | ...
 ;; | argn
-;; | the next expression (top)  -> x
+;; | the next expression   -> x
 ;; | the current frame    -> f
-;; | the current closure (bottom)   -> c
+;; | the current closure   -> c
+;; (bottom)
 
 ;;register =>
 ;; a => accumulator
@@ -42,7 +50,9 @@
 
 (define find-assignments
   (lambda (x v)
-    (cond [(symbol? x) '()]
+    (cond [(assq x primitive-1) '()]
+	  [(assq x primitive-2) '()]
+          [(symbol? x) '()]
 	  [(pair? x)
 	   (record-case
 	    x
@@ -67,7 +77,9 @@
 
 (define find-free
   (lambda (x b)
-    (cond [(symbol? x) (if (set-member? x b) '() (list x))]
+    (cond [(assq x primitive-1) '()]
+	  [(assq x primitive-2) '()]
+          [(symbol? x) (if (set-member? x b) '() (list x))]
 	  [(pair? x)
 	   (record-case
 	    x
@@ -128,10 +140,25 @@
 	  n
 	  (loop (cdr lst) (compile (car lst) e s n))))))
 
+;;primitive procedure which need only one argument
+(define primitive-1
+  (list (list 'boolean?) (list 'null?) (list 'pair?)
+	(list 'number?) (list 'char?) (list 'string?)
+	(list 'symbol?) (list 'car) (list 'cdr)))
+
+;;primitive procedure which need two arguments
+(define primitive-2
+  (list (list 'cons) (list 'eq?) (list '+)
+	(list '-) (list '*) (list '/)))
+
 (define compile
   (lambda (x e s next)
     ;;(debug-line x)
     (cond
+     [(assq x primitive-1) => (lambda (v)
+				`(close ,0 (primitive-1 ,@v (return ,1)) ,next))]
+     [(assq x primitive-2) => (lambda (v)
+				`(close ,0 (primitive-2 ,@v (return ,2)) ,next))]
      [(symbol? x) (compile-refer x e
 				 (if (set-member? x s)
 				     `(indirect ,next)
@@ -216,6 +243,11 @@
     (record-case
      x
      [halt () a]
+     [primitive-2 (proc x) (let ([n (index f 0)]
+				 [m (index f 1)])
+			     (VM ((eval proc) n m) x f c s))]
+     [primitive-1 (proc x) (let ([n (index f 0)])
+			     (VM ((eval proc) n) x f c s))]
      [refer-local (n x) (VM (index f n) x f c s)]
      [refer-free (n x) (VM (closure-index c (+ n 1)) x f c s)]
      [indirect (x) (VM (unbox a) x f c s)]
@@ -239,11 +271,30 @@
 	       (VM a (index s 0) (index s 1) (index s 2) (- s 3)))]
      [else (display "syntax error\n")])))
 
+(define tagged-list?
+  (lambda (exp tag)
+    (if (eq? (car exp) tag) #t #f)))
+
+(define pre-compile
+  (lambda (x)
+    (cond [(not (pair? x)) x]
+          [(tagged-list? x 'let)
+	   `((lambda (,@(map car (cadr x))) ,@(pre-compile (cddr x))) ,@(pre-compile (map cadr (cadr x))))]
+	  [(pair? x) (map pre-compile x)]
+	  [else (display "syntax error!\n")])))
+
 (define evaluate
   (lambda (x)
-    (VM '() (compile x '() '() '(halt)) 0 '() 0)))
+    (VM '() (compile (pre-compile x) '() '() '(halt)) 0 '() 0)))
 
-(display (compile '((lambda (f x) (set! x 2) (f x)) (lambda (y) y) 1) '() '() '(halt)))
+;;(display (compile '((lambda (x) (number? (car x))) (cons 'v 'a)) '() '() '(halt)))
+(display (evaluate '(let ((a 1) (b 2)) (+ (* a b) b))))
+;(display (pre-compile '(let ((v (let ((a 1)) a))) (let ((b v)) b))))
 
-;;(display (evaluate '((lambda (f x) (f x)) (lambda (y) y) 1)))
+
+
+
+
+
+
 
