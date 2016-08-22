@@ -143,8 +143,8 @@
 	      (let ([new-env (if (null? e)
 				 (cons '() (cons (cadar lst) '()))
 				 (cons (car e) (cons (cadar lst) (cdr e))))])
-		(compile (car lst) new-env s
-			 (compile-multi (cdr lst) new-env s next)))
+		(compile (car lst) new-env (set-union s (list (cadar lst)))
+			 (compile-multi (cdr lst) new-env (set-union s (list (cadar lst))) next)))
 	      (compile (car lst) e s (compile-multi (cdr lst) e s next)))))
     (loop lst)))
 
@@ -177,10 +177,11 @@
        [quote (obj) `(constant ,obj ,next)]
        [begin (b1 . b2)
 	      (compile-multi (cons b1 b2) e s next)]
-       [define (k v) (compile v e s `(argument (close
-						,1
-						,next
-						(apply))))]
+       [define (k v) (compile v e s `(argument (box 0
+						    (close
+						     ,1
+						     ,next
+						     (apply)))))]
        [lambda (vars . body)
 	 (let ([free (find-free body vars)]
 	       [sets (find-assignments body vars)])
@@ -253,7 +254,7 @@
 
 (define VM
   (lambda (a x f c s)
-    ;;(debug-line x)
+    (debug-line x)
     (record-case
      x
      [halt () a]
@@ -272,7 +273,7 @@
      [test (then else) (VM a (if a then else) f c s)]
      [assign-local (n x) (set-car! (index f n) a)
 		   (VM a x f c s)]
-     [assign-free (n x) (set-car! (closure-index c n) a)
+     [assign-free (n x) (set-car! (closure-index c (+ n 1)) a)
 		  (VM a x f c s)]
      [conti (x) (VM (continuation s) x f c s)]
      [nuate (stack x) (VM a x f c (restore-stack stack))]
@@ -303,9 +304,7 @@
 
 ;;(display (compile '(begin (+ 2 3) (* 12 34)) '() '() '(halt)))
 
-(display (evaluate '(begin (define a 4)
-			   (let ([a a])
-			     (/ a a)))))
+(display (evaluate '((lambda (x) (+ x 3)) 123)))
 
 ;(display (pre-compile '(let ((v (let ((a 1)) a))) (let ((b v)) b))))
 
