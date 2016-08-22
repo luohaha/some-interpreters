@@ -152,12 +152,15 @@
 (define primitive-1
   (list (list 'boolean?) (list 'null?) (list 'pair?)
 	(list 'number?) (list 'char?) (list 'string?)
-	(list 'symbol?) (list 'car) (list 'cdr)))
+	(list 'symbol?) (list 'car) (list 'cdr)
+	(list 'list?) (list 'not) (list 'eval)
+	(list 'length) (list 'display)))
 
 ;;primitive procedure which need two arguments
 (define primitive-2
-  (list (list 'cons) (list 'eq?) (list '+)
-	(list '-) (list '*) (list '/)))
+  (list (list 'cons) (list 'eq?) (list '+) (list 'equal?)
+	(list '-) (list '*) (list '/)
+	(list 'and) (list 'or) (list 'eqv?)))
 
 (define compile
   (lambda (x e s next)
@@ -254,7 +257,7 @@
 
 (define VM
   (lambda (a x f c s)
-    (debug-line x)
+    ;;(debug-line x)
     (record-case
      x
      [halt () a]
@@ -295,6 +298,10 @@
     (cond [(not (pair? x)) x]
           [(tagged-list? x 'let)
 	   `((lambda (,@(map car (cadr x))) ,@(pre-compile (cddr x))) ,@(pre-compile (map cadr (cadr x))))]
+	  [(tagged-list? x 'list)
+	   (if (= 2 (length x))
+	       `(cons ,(cadr x) ())
+	       `(cons ,(cadr x) ,(pre-compile `(list ,@(cddr x)))))]
 	  [(pair? x) (map pre-compile x)]
 	  [else (display "syntax error!\n")])))
 
@@ -303,10 +310,11 @@
     (VM '() (compile (pre-compile x) '() '() '(halt)) 0 '() 0)))
 
 ;;(display (compile '(begin (+ 2 3) (* 12 34)) '() '() '(halt)))
+(display (evaluate '(begin (define asd (lambda (x) (* x x)))
+			   (list? (list 4 5 6)))))
 
-(display (evaluate '((lambda (x) (+ x 3)) 123)))
+;;(display (pre-compile '(list 1 2 3 4)))
 
-;(display (pre-compile '(let ((v (let ((a 1)) a))) (let ((b v)) b))))
 
 
 
