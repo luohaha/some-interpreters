@@ -149,13 +149,15 @@
 	(list 'number?) (list 'char?) (list 'string?)
 	(list 'symbol?) (list 'car) (list 'cdr)
 	(list 'list?) (list 'not) (list 'eval)
-	(list 'length) (list 'display)))
+	(list 'length) (list 'display) (list 'reverse)))
 
 ;;primitive procedure which need two arguments
 (define primitive-2
   (list (list 'cons) (list 'eq?) (list '+) (list 'equal?)
 	(list '-) (list '*) (list '/) (list '=)
-	(list 'and) (list 'or) (list 'eqv?)))
+	(list 'and) (list 'or) (list 'eqv?) (list 'memq)
+	(list 'memv) (list 'member) (list 'assq) (list 'assv)
+	(list 'assoc)))
 
 (define compile
   (lambda (x e s next)
@@ -316,12 +318,9 @@
   (lambda (x)
     (VM '() (compile (pre-compile x) '() '() '(halt)) 0 '() 0)))
 
-(display (evaluate '(letrec ((dou (lambda (x)
-				    (if (= x 0)
-					1
-					(* x (dou (- x 1))))))
-			     (add (lambda (x)
-				    (if (= x 0)
-					0
-					(+ x (add (- x 1)))))))
-		      (dou (add 4)))))
+(display (evaluate '(letrec ([list-ref
+			      (lambda (lst n)
+				(if (= n 0)
+				    (car lst)
+				    (list-ref (cdr lst) (- n 1))))])
+		      (list-ref '(1 2 3 4) 1))))
