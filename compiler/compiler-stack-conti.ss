@@ -57,7 +57,8 @@
 	   (record-case
 	    x
 	    [quote (obj) '()]
-	    [lambda (vars body) (find-assignments body (set-minus v vars))]
+	    [begin (b1 . b2) (find-assignments (cons b1 b2) v)]
+	    [lambda (vars . body) (find-assignments body (set-minus v vars))]
 	    [if (test then else)
 		(set-union (find-assignments test v)
 			   (set-union (find-assignments then v)
@@ -84,7 +85,8 @@
 	   (record-case
 	    x
 	    [quote (obj) '()]
-	    [lambda (vars body) (find-free body (set-union vars b))]
+	    [begin (b1 . b2) (find-free (cons b1 b2) b)]
+	    [lambda (vars . body) (find-free body (set-union vars b))]
 	    [if (test then else)
 		(set-union (find-free test b)
 			   (set-union (find-free then b)
@@ -138,14 +140,7 @@
     (define (loop lst)
       (if (null? lst)
 	  next
-	  (if (and (pair? (car lst))
-		   (eq? (caar lst) 'define))
-	      (let ([new-env (if (null? e)
-				 (cons '() (cons (cadar lst) '()))
-				 (cons (car e) (cons (cadar lst) (cdr e))))])
-		(compile (car lst) new-env (set-union s (list (cadar lst)))
-			 (compile-multi (cdr lst) new-env (set-union s (list (cadar lst))) next)))
-	      (compile (car lst) e s (compile-multi (cdr lst) e s next)))))
+	  (compile (car lst) e s (loop (cdr lst)))))
     (loop lst)))
 
 ;;primitive procedure which need only one argument
@@ -159,7 +154,7 @@
 ;;primitive procedure which need two arguments
 (define primitive-2
   (list (list 'cons) (list 'eq?) (list '+) (list 'equal?)
-	(list '-) (list '*) (list '/)
+	(list '-) (list '*) (list '/) (list '=)
 	(list 'and) (list 'or) (list 'eqv?)))
 
 (define compile
@@ -180,11 +175,6 @@
        [quote (obj) `(constant ,obj ,next)]
        [begin (b1 . b2)
 	      (compile-multi (cons b1 b2) e s next)]
-       [define (k v) (compile v e s `(argument (box 0
-						    (close
-						     ,1
-						     ,next
-						     (apply)))))]
        [lambda (vars . body)
 	 (let ([free (find-free body vars)]
 	       [sets (find-assignments body vars)])
@@ -293,11 +283,28 @@
   (lambda (exp tag)
     (if (eq? (car exp) tag) #t #f)))
 
+(define Y
+  '(lambda (X)
+    ((lambda (proc)
+       (X (lambda (arg) ((proc proc) arg))))
+     (lambda (proc)
+       (X (lambda (arg) ((proc proc) arg)))))))
+
+(define gen-Y-exp
+  (lambda (vars vals)
+    (define (gen var val)
+      `(,Y (lambda (,var) ,(pre-compile val))))
+    (map gen vars vals)))
+
 (define pre-compile
   (lambda (x)
     (cond [(not (pair? x)) x]
           [(tagged-list? x 'let)
 	   `((lambda (,@(map car (cadr x))) ,@(pre-compile (cddr x))) ,@(pre-compile (map cadr (cadr x))))]
+	  [(tagged-list? x 'letrec)
+	   `((lambda (,@(map car (cadr x)))
+	       ,@(pre-compile (cddr x)))
+	     ,@(gen-Y-exp (map car (cadr x)) (map cadr (cadr x))))]
 	  [(tagged-list? x 'list)
 	   (if (= 2 (length x))
 	       `(cons ,(cadr x) ())
@@ -309,17 +316,12 @@
   (lambda (x)
     (VM '() (compile (pre-compile x) '() '() '(halt)) 0 '() 0)))
 
-;;(display (compile '(begin (+ 2 3) (* 12 34)) '() '() '(halt)))
-(display (evaluate '(begin (define asd (lambda (x) (* x x)))
-			   (list? (list 4 5 6)))))
-
-;;(display (pre-compile '(list 1 2 3 4)))
-
-
-
-
-
-
-
-
-
+(display (evaluate '(letrec ((dou (lambda (x)
+				    (if (= x 0)
+					1
+					(* x (dou (- x 1))))))
+			     (add (lambda (x)
+				    (if (= x 0)
+					0
+					(+ x (add (- x 1)))))))
+		      (dou (add 4)))))
